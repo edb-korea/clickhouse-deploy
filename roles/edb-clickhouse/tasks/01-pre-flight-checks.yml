@@ -208,6 +208,8 @@
   ansible.builtin.command: id -u
   become: true
   changed_when: false
+  # read-only: run it in --check mode too, otherwise the command is skipped and the output is empty
+  check_mode: false
   register: _ch_become_check
   failed_when: false
 
@@ -218,6 +220,10 @@
       Configure passwordless sudo for the connecting user, or pass
       --ask-become-pass (or set ansible_become_password) when running
       the playbook.
+      Details: rc={{ _ch_become_check.rc | default('n/a') }},
+      stdout='{{ _ch_become_check.stdout | default('') | trim }}',
+      stderr='{{ _ch_become_check.stderr | default('') | trim }}',
+      msg='{{ _ch_become_check.msg | default('') | trim }}'
   when:
     - _ch_become_check.rc is not defined or _ch_become_check.rc != 0
       or (_ch_become_check.stdout | default('')) | trim != '0'

@@ -129,5 +129,6 @@ clickhouse-keeper-client -h 127.0.0.1 -p 9181 -q mntr   # Keeper 노드에서
 ## 제한 사항
 
 - `ring`에서 `sharded`로 바꾸는 식의 토폴로지 변경이나 샤드 추가(resharding)는 다루지 않습니다. 데이터 재분배는 ClickHouse 쪽 작업입니다.
+- `--check`(dry run)는 첫 번째 play(저장소, 패키지, 설정 배포)까지만 의미가 있습니다. 아직 설치되지 않은 호스트에서는 저장소 등록과 서비스 기동이 실제로 일어나지 않아 이후 단계가 실패합니다. 문법만 볼 때는 `--syntax-check`를 쓰세요.
 - 방화벽, SELinux, OS 커널/파일 제한 튜닝은 이 role의 범위가 아닙니다.
 - Keeper 노드를 추가하거나 제거하는 멤버십 변경은 한 노드씩 직접 진행해야 합니다.
