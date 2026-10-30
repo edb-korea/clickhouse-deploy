@@ -1,0 +1,253 @@
+---
+
+# Validate the inventory and derive the topology facts used by the other
+# task files. Every host calculates the same cluster-wide facts.
+
+- name: Check for Red Hat based OS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts["os_family"] == "RedHat"
+    fail_msg: "This role only supports Red Hat based operating systems."
+
+- name: Assert ch_topology is 'single', 'ring' or 'sharded'
+  ansible.builtin.assert:
+    that:
+      - ch_topology is string
+      - ch_topology in ['single', 'ring', 'sharded']
+    fail_msg: "ch_topology must be 'single', 'ring' or 'sharded' (got '{{ ch_topology | default('undefined') }}')."
+
+- name: Assert cluster_name is defined and the cluster group exists
+  ansible.builtin.assert:
+    that:
+      - cluster_name is defined
+      - cluster_name is string
+      - cluster_name | length > 0
+      - ('cluster_' ~ cluster_name) in groups
+    fail_msg: >-
+      cluster_name must be set on the group and the hosts must be members of
+      the group 'cluster_<cluster_name>'.
+
+- name: Assert ch_cluster_name is a valid XML element name
+  ansible.builtin.assert:
+    that:
+      - ch_cluster_name is regex('^[a-zA-Z_][a-zA-Z0-9_]*$')
+    fail_msg: "ch_cluster_name must contain only letters, digits and underscores (got '{{ ch_cluster_name }}')."
+
+- name: Assert ch_roles is a list of 'server' and / or 'keeper'
+  ansible.builtin.assert:
+    that:
+      - ch_roles is defined
+      - ch_roles is iterable
+      - ch_roles is not string
+      - ch_roles is not mapping
+      - ch_roles | length > 0
+      - ch_roles | difference(['server', 'keeper']) | length == 0
+    fail_msg: >-
+      ch_roles must be defined on {{ inventory_hostname }} as a list containing
+      'server' and / or 'keeper'.
+
+- name: Assert ch_upgrade is either 'install-but-no-automatic-upgrades' or 'always-upgrade-to-latest-minor'
+  ansible.builtin.assert:
+    that:
+      - ch_upgrade is string
+      - ch_upgrade in ['install-but-no-automatic-upgrades', 'always-upgrade-to-latest-minor']
+    fail_msg: >-
+      ch_upgrade must be 'install-but-no-automatic-upgrades' or
+      'always-upgrade-to-latest-minor' (got '{{ ch_upgrade | default('undefined') }}').
+
+- name: Map ch_upgrade to the dnf module's state value
+  ansible.builtin.set_fact:
+    _ch_dnf_state: "{{ 'latest' if ch_upgrade == 'always-upgrade-to-latest-minor' else 'present' }}"
+
+# Cluster membership
+
+- name: Calculate the server and Keeper hosts of the cluster
+  ansible.builtin.set_fact:
+    _ch_server_hosts: >-
+      {{ groups['cluster_' ~ cluster_name]
+         | map('extract', hostvars)
+         | selectattr('ch_roles', 'defined')
+         | selectattr('ch_roles', 'contains', 'server')
+         | map(attribute='inventory_hostname') | list }}
+    _ch_keeper_hosts: >-
+      {{ groups['cluster_' ~ cluster_name]
+         | map('extract', hostvars)
+         | selectattr('ch_roles', 'defined')
+         | selectattr('ch_roles', 'contains', 'keeper')
+         | map(attribute='inventory_hostname') | list }}
+
+- name: Assert every host of the cluster defines ch_roles
+  ansible.builtin.assert:
+    that:
+      - (groups['cluster_' ~ cluster_name] | map('extract', hostvars) | rejectattr('ch_roles', 'defined') | list | length) == 0
+    fail_msg: "Every host in group 'cluster_{{ cluster_name }}' must define ch_roles."
+
+- name: Assert there is at least one server host
+  ansible.builtin.assert:
+    that:
+      - _ch_server_hosts | length > 0
+    fail_msg: "Group 'cluster_{{ cluster_name }}' has no host with the 'server' role."
+
+# Keeper (any topology with a Keeper)
+
+- name: Assert the Keeper hosts have a unique integer ch_keeper_id
+  ansible.builtin.assert:
+    that:
+      - (_ch_keeper_hosts | map('extract', hostvars, 'ch_keeper_id') | select('integer') | list | length) == (_ch_keeper_hosts | length)
+      - (_ch_keeper_hosts | map('extract', hostvars, 'ch_keeper_id') | unique | list | length) == (_ch_keeper_hosts | length)
+    fail_msg: "Every host with the 'keeper' role needs a unique integer ch_keeper_id."
+  when: _ch_keeper_hosts | length > 0
+
+- name: Assert the number of Keeper hosts is odd and at least 3
+  ansible.builtin.assert:
+    that:
+      - _ch_keeper_hosts | length >= 3
+      - _ch_keeper_hosts | length is odd
+    fail_msg: >-
+      Keeper needs a quorum: use an odd number of Keeper hosts, at least 3
+      (got {{ _ch_keeper_hosts | length }}).
+  when: _ch_keeper_hosts | length > 0
+
+# Topology specific checks
+
+- name: Check the 'single' topology
+  when: ch_topology == 'single'
+  block:
+    - name: Assert exactly one server host and no Keeper host
+      ansible.builtin.assert:
+        that:
+          - _ch_server_hosts | length == 1
+          - _ch_keeper_hosts | length == 0
+        fail_msg: >-
+          The 'single' topology needs exactly one host with ch_roles ['server']
+          and no Keeper (got {{ _ch_server_hosts | length }} server and
+          {{ _ch_keeper_hosts | length }} Keeper hosts).
+
+    - name: Set the topology facts
+      ansible.builtin.set_fact:
+        _ch_shard_count: 1
+        _ch_expected_replicas: 1
+
+- name: Check the 'ring' topology
+  when: ch_topology == 'ring'
+  block:
+    - name: Assert at least three servers, each with a ch_shard from 1 to N, and a Keeper quorum
+      ansible.builtin.assert:
+        that:
+          - _ch_server_hosts | length >= 3
+          - (_ch_server_hosts | map('extract', hostvars, 'ch_shard') | select('integer') | list | length) == (_ch_server_hosts | length)
+          - (_ch_server_hosts | map('extract', hostvars, 'ch_shard') | unique | sort | list) == (range(1, (_ch_server_hosts | length) + 1) | list)
+          - _ch_keeper_hosts | length >= 3
+        fail_msg: >-
+          The 'ring' topology needs at least 3 server hosts. Their ch_shard must be
+          the unique integers 1..N (N = number of server hosts), and Keeper must run
+          on at least 3 hosts.
+
+    - name: Set the topology facts
+      ansible.builtin.set_fact:
+        _ch_shard_count: "{{ _ch_server_hosts | length }}"
+        # every shard has two replicas
+        _ch_expected_replicas: "{{ (_ch_server_hosts | length) * 2 }}"
+
+- name: Check the 'sharded' topology
+  when: ch_topology == 'sharded'
+  block:
+    - name: Assert every server has an integer ch_shard and ch_replica
+      ansible.builtin.assert:
+        that:
+          - (_ch_server_hosts | map('extract', hostvars, 'ch_shard') | select('integer') | list | length) == (_ch_server_hosts | length)
+          - (_ch_server_hosts | map('extract', hostvars, 'ch_replica') | select('integer') | list | length) == (_ch_server_hosts | length)
+          - (_ch_server_hosts | map('extract', hostvars, 'ch_shard') | min) >= 1
+          - (_ch_server_hosts | map('extract', hostvars, 'ch_replica') | min) >= 1
+        fail_msg: "Every host with the 'server' role needs integer ch_shard and ch_replica values (>= 1)."
+
+    - name: Set the topology facts
+      ansible.builtin.set_fact:
+        _ch_shard_count: "{{ _ch_server_hosts | map('extract', hostvars, 'ch_shard') | max }}"
+        _ch_expected_replicas: "{{ _ch_server_hosts | length }}"
+
+    - name: Assert shards are numbered 1..N and every shard / replica pair is unique
+      ansible.builtin.assert:
+        that:
+          - (_ch_server_hosts | map('extract', hostvars, 'ch_shard') | unique | sort | list) == (range(1, (_ch_shard_count | int) + 1) | list)
+          - >-
+            (_ch_server_hosts | map('extract', hostvars, 'ch_shard')
+             | zip(_ch_server_hosts | map('extract', hostvars, 'ch_replica'))
+             | map('join', '-') | unique | list | length) == (_ch_server_hosts | length)
+        fail_msg: >-
+          ch_shard must be the numbers 1..N without gaps, and every ch_shard / ch_replica
+          combination may only be used by one host.
+
+    - name: Assert Keeper exists when a shard has more than one replica
+      ansible.builtin.assert:
+        that:
+          - _ch_keeper_hosts | length >= 3
+        fail_msg: >-
+          At least one shard has more than one replica, which requires Keeper
+          on at least 3 hosts.
+      when: >-
+        (_ch_server_hosts | map('extract', hostvars, 'ch_shard') | list | length)
+        != (_ch_server_hosts | map('extract', hostvars, 'ch_shard') | unique | list | length)
+
+# Authentication
+
+- name: Assert a cluster secret is set when a password is used on a multi-node cluster
+  ansible.builtin.assert:
+    that:
+      - ch_cluster_secret | length > 0
+    fail_msg: >-
+      ch_default_password is set on a multi-node topology: set ch_cluster_secret as well,
+      otherwise Distributed queries cannot authenticate between the nodes.
+  when:
+    - ch_topology != 'single'
+    - ch_default_password | length > 0
+
+# Privilege escalation
+
+- name: Test that privilege escalation (become) works
+  ansible.builtin.command: id -u
+  become: true
+  changed_when: false
+  register: _ch_become_check
+  failed_when: false
+
+- name: Fail if privilege escalation (become) does not work
+  ansible.builtin.fail:
+    msg: >-
+      Privilege escalation (become) failed on {{ inventory_hostname }}.
+      Configure passwordless sudo for the connecting user, or pass
+      --ask-become-pass (or set ansible_become_password) when running
+      the playbook.
+  when:
+    - _ch_become_check.rc is not defined or _ch_become_check.rc != 0
+      or (_ch_become_check.stdout | default('')) | trim != '0'
+
+# Server instances running on this host
+
+- name: Build the list of server instances of this host
+  ansible.builtin.set_fact:
+    _ch_instances: "{{ [_ch_primary] + ([_ch_secondary] if ch_topology == 'ring' else []) }}"
+  vars:
+    _ch_primary:
+      service: clickhouse-server
+      conf_dir: /etc/clickhouse-server
+      data_dir: "{{ ch_data_directory }}"
+      custom_paths: "{{ ch_data_directory != '/var/lib/clickhouse' }}"
+      http_port: "{{ ch_http_port }}"
+      tcp_port: "{{ ch_tcp_port }}"
+      interserver_port: "{{ ch_interserver_http_port }}"
+      shard: "{{ ch_shard | default(1) | int }}"
+      primary: true
+    # ring: the second instance holds the replica of the previous shard
+    # (host 1 holds shard N, host 2 holds shard 1, ...)
+    _ch_secondary:
+      service: "{{ ch_ring_service }}"
+      conf_dir: "{{ ch_ring_config_directory }}"
+      data_dir: "{{ ch_ring_data_directory }}"
+      custom_paths: true
+      http_port: "{{ ch_ring_http_port }}"
+      tcp_port: "{{ ch_ring_tcp_port }}"
+      interserver_port: "{{ ch_ring_interserver_http_port }}"
+      shard: "{{ ((ch_shard | default(1) | int - 2) % (_ch_shard_count | int)) + 1 }}"
+      primary: false
+  when: "'server' in ch_roles"

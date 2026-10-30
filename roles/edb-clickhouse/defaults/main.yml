@@ -1,0 +1,86 @@
+---
+
+# Topology of the cluster (set as a group variable on cluster_<cluster_name>):
+#   single   one server node, no Keeper, no cluster definition
+#   ring     N server nodes (N >= 3) = N shards x 2 replicas in a circular layout.
+#            Every host runs two ClickHouse instances: instance 1 holds shard i,
+#            instance 2 holds the replica of shard i-1 (see README-clickhouse.md)
+#   sharded  server nodes with an explicit ch_shard / ch_replica per host.
+#            Keeper can be co-located or on dedicated nodes
+ch_topology: "single"
+
+# ch_roles has no default: every host must define it in the inventory
+# (a list with 'server' and / or 'keeper')
+# ch_keeper_id, ch_shard and ch_replica are per-host variables, see README-clickhouse.md
+
+# Name of the ClickHouse cluster (<remote_servers>/<name>, {cluster} macro).
+# Must be a valid XML element name
+ch_cluster_name: "{{ cluster_name | default('ch_cluster') }}"
+
+# Name of the EDB repository (plan) that provides the edb-clickhouse-* packages
+ch_edb_repository: "clickhouse"
+
+# $ch_upgrade can be "install-but-no-automatic-upgrades" or
+# "always-upgrade-to-latest-minor", whereas the mapping is:
+# "install-but-no-automatic-upgrades" -> RPM "present"
+# "always-upgrade-to-latest-minor" -> RPM "latest"
+ch_upgrade: "install-but-no-automatic-upgrades"
+
+# Packages: edb-clickhouse-common-static is pulled in as a dependency.
+# edb-clickhouse-server also ships clickhouse-keeper.service, so a co-located
+# Keeper needs no extra package; the keeper package is only installed on nodes
+# that are Keeper only
+ch_server_packages:
+  - edb-clickhouse-server
+  - edb-clickhouse-client
+ch_keeper_packages:
+  - edb-clickhouse-keeper
+ch_dnf_timeout: 300
+
+ch_listen_host: "0.0.0.0"
+
+# Server ports (instance 1)
+ch_http_port: 8123
+ch_tcp_port: 9000
+ch_interserver_http_port: 9009
+# Directory used by the instance 1 (the package default is /var/lib/clickhouse).
+# It is created if it does not exist
+ch_data_directory: "/var/lib/clickhouse"
+
+# Keeper
+ch_keeper_port: 9181
+ch_keeper_raft_port: 9234
+ch_keeper_data_directory: "/var/lib/clickhouse/coordination"
+ch_keeper_operation_timeout_ms: 10000
+ch_keeper_session_timeout_ms: 30000
+# Path under which ClickHouse stores the distributed DDL queue
+ch_distributed_ddl_path: "/clickhouse/task_queue/ddl"
+
+# Second server instance per host, only used by the 'ring' topology
+ch_ring_http_port: 8124
+ch_ring_tcp_port: 9001
+ch_ring_interserver_http_port: 9010
+ch_ring_data_directory: "/var/lib/clickhouse-2"
+ch_ring_config_directory: "/etc/clickhouse-server-2"
+ch_ring_log_directory: "/var/log/clickhouse-server-2"
+ch_ring_service: "clickhouse-server-2"
+# Binary started by the systemd unit of the second instance
+ch_server_binary: "/usr/bin/clickhouse-server"
+
+# Authentication. All of these are optional and empty by default, which
+# matches the EDB package defaults (the 'default' user has no password).
+# Store the values in Ansible Vault.
+#   ch_default_password     password of the 'default' user (hashed as sha256 on the server)
+#   ch_cluster_secret       shared secret of the cluster, required with a password
+#                           on multi-node topologies so that Distributed queries can
+#                           authenticate between the nodes
+#   ch_interserver_password password used for replica fetches between servers
+ch_default_password: ""
+ch_cluster_secret: ""
+ch_interserver_password: ""
+
+# Create a replicated / distributed test table after the deployment and
+# check that the rows are sharded and replicated
+ch_run_smoke_test: false
+ch_smoke_test_rows: 1000
+ch_smoke_test_cleanup: true

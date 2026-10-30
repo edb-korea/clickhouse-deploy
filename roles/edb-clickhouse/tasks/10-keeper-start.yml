@@ -1,0 +1,25 @@
+---
+
+# Start (or restart after a configuration change) Keeper on this host.
+# Used with `serial: 1`, so that a restart never takes down the quorum.
+
+- name: Load the topology facts
+  ansible.builtin.include_tasks: 01-pre-flight-checks.yml
+  when: _ch_keeper_hosts is not defined
+
+- name: Enable and start Keeper
+  ansible.builtin.systemd:
+    name: clickhouse-keeper
+    enabled: true
+    state: "{{ 'restarted' if (_ch_keeper_changed | default(false)) else 'started' }}"
+  become: true
+  become_user: root
+
+# A single Keeper node can not answer client requests before the quorum
+# is formed, so only check that the port is open here.
+# The quorum is checked after all Keeper nodes are up (11-keeper-quorum.yml)
+- name: Wait until Keeper listens on its client port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ ch_keeper_port }}"
+    timeout: 120

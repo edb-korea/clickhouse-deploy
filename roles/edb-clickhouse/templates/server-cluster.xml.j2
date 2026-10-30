@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<!-- {{ ansible_managed }} -->
+{# addr(): address of a host, ch_address > ansible_host > inventory name #}
+{% macro addr(h) -%}
+{{ h.ch_address | default(h.ansible_host | default(h.inventory_hostname)) }}
+{%- endmacro %}
+{% set servers = _ch_server_hosts | map('extract', hostvars) | list %}
+<clickhouse>
+    <remote_servers>
+        <{{ ch_cluster_name }}>
+{% if ch_cluster_secret | length > 0 %}
+            <secret>{{ ch_cluster_secret }}</secret>
+{% endif %}
+{% for s in range(1, (_ch_shard_count | int) + 1) %}
+{#
+   ring:    shard s lives on the instance 1 of the host with ch_shard == s
+            and on the instance 2 of the next host (ch_shard == s % N + 1)
+   sharded: all hosts with ch_shard == s, ordered by ch_replica
+#}
+{%   set members = [] %}
+{%   if ch_topology == 'ring' %}
+{%     for h in servers | selectattr('ch_shard', 'equalto', s) %}
+{%       set _ = members.append({'host': h, 'port': ch_tcp_port}) %}
+{%     endfor %}
+{%     for h in servers | selectattr('ch_shard', 'equalto', (s % (_ch_shard_count | int)) + 1) %}
+{%       set _ = members.append({'host': h, 'port': ch_ring_tcp_port}) %}
+{%     endfor %}
+{%   else %}
+{%     for h in servers | selectattr('ch_shard', 'equalto', s) | sort(attribute='ch_replica') %}
+{%       set _ = members.append({'host': h, 'port': ch_tcp_port}) %}
+{%     endfor %}
+{%   endif %}
+            <shard>
+                <internal_replication>true</internal_replication>
+{%   for m in members %}
+                <replica>
+                    <host>{{ addr(m.host) }}</host>
+                    <port>{{ m.port }}</port>
+                </replica>
+{%   endfor %}
+            </shard>
+{% endfor %}
+        </{{ ch_cluster_name }}>
+    </remote_servers>
+{% if _ch_keeper_hosts | length > 0 %}
+    <zookeeper>
+{% for h in _ch_keeper_hosts | map('extract', hostvars) | sort(attribute='ch_keeper_id') %}
+        <node>
+            <host>{{ addr(h) }}</host>
+            <port>{{ ch_keeper_port }}</port>
+        </node>
+{% endfor %}
+    </zookeeper>
+{% endif %}
+    <macros>
+        <cluster>{{ ch_cluster_name }}</cluster>
+        <shard>{{ '%02d' | format(ch_inst.shard | int) }}</shard>
+        <replica>{{ inventory_hostname }}</replica>
+    </macros>
+    <distributed_ddl>
+        <path>{{ ch_distributed_ddl_path }}</path>
+    </distributed_ddl>
+</clickhouse>

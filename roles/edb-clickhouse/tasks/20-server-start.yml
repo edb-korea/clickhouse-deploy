@@ -1,0 +1,42 @@
+---
+
+# Start (or restart after a configuration change) the server instances of
+# this host. Used with `serial`, so that replicas are restarted one by one.
+
+- name: Load the topology facts
+  ansible.builtin.include_tasks: 01-pre-flight-checks.yml
+  when: _ch_instances is not defined
+
+- name: Enable and start the server instances
+  ansible.builtin.systemd:
+    name: "{{ ch_inst.service }}"
+    enabled: true
+    state: "{{ 'restarted' if ch_inst.service in (_ch_changed_services | default([])) else 'started' }}"
+  become: true
+  become_user: root
+  loop: "{{ _ch_instances }}"
+  loop_control:
+    loop_var: ch_inst
+    label: "{{ ch_inst.service }}"
+
+- name: Wait until the server instances accept connections
+  ansible.builtin.command:
+    argv:
+      - clickhouse-client
+      - --host
+      - 127.0.0.1
+      - --port
+      - "{{ ch_inst.tcp_port }}"
+      - --query
+      - SELECT 1
+  environment:
+    CLICKHOUSE_PASSWORD: "{{ ch_default_password }}"
+  changed_when: false
+  register: _ch_ping
+  until: _ch_ping.rc == 0
+  retries: 24
+  delay: 5
+  loop: "{{ _ch_instances }}"
+  loop_control:
+    loop_var: ch_inst
+    label: "{{ ch_inst.service }}"

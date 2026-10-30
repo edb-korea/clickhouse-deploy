@@ -1,0 +1,42 @@
+---
+# Three nodes: 3 shards x 2 replicas in a circular layout, Keeper on all three nodes.
+#
+#   ansible-playbook -i inventories/clickhouse/ring3.yml clickhouse.yml
+#
+# Every host runs two server instances:
+#   instance 1 (port 9000)  shard i       = ch_shard of the host
+#   instance 2 (port 9001)  shard i-1     = replica of the previous host's shard
+#
+#   host       instance 1   instance 2
+#   ch-ring-1  shard 1      shard 3
+#   ch-ring-2  shard 2      shard 1
+#   ch-ring-3  shard 3      shard 2
+#
+# So every shard has one replica on its own host and one on the next host, and
+# the cluster survives the loss of any single host.
+clickhouse_clusters:
+  children:
+    cluster_ch_ring:
+      vars:
+        cluster_name: "ch_ring"
+        ch_topology: "ring"
+        # ansible_user: rocky
+        # ch_default_password: "{{ vault_ch_default_password }}"
+        # ch_cluster_secret: "{{ vault_ch_cluster_secret }}"
+        # ch_run_smoke_test: true
+      hosts:
+        ch-ring-1:
+          ansible_host: 10.0.0.21
+          ch_roles: [server, keeper]
+          ch_shard: 1
+          ch_keeper_id: 1
+        ch-ring-2:
+          ansible_host: 10.0.0.22
+          ch_roles: [server, keeper]
+          ch_shard: 2
+          ch_keeper_id: 2
+        ch-ring-3:
+          ansible_host: 10.0.0.23
+          ch_roles: [server, keeper]
+          ch_shard: 3
+          ch_keeper_id: 3

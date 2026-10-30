@@ -1,0 +1,133 @@
+---
+
+- name: Remember that no server needs a restart on this host
+  ansible.builtin.set_fact:
+    _ch_changed_services: []
+
+- name: Configure ClickHouse servers
+  when: "'server' in ch_roles"
+  become: true
+  become_user: root
+  block:
+    - name: Create the data directories of the server instances
+      ansible.builtin.file:
+        path: "{{ ch_inst.data_dir }}"
+        state: directory
+        owner: clickhouse
+        group: clickhouse
+        mode: "0750"
+      loop: "{{ _ch_instances }}"
+      loop_control:
+        loop_var: ch_inst
+        label: "{{ ch_inst.service }}"
+
+    - name: Create the configuration directories of the first server instance
+      ansible.builtin.file:
+        path: "{{ (_ch_instances | first).conf_dir }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - config.d
+        - users.d
+
+    # The second instance of the 'ring' topology is a copy of the packaged
+    # configuration with its own ports, paths and systemd unit
+    - name: Set up the second server instance
+      when: ch_topology == 'ring'
+      block:
+        - name: Create the directories of the second instance
+          ansible.builtin.file:
+            path: "{{ item.path }}"
+            state: directory
+            owner: "{{ item.owner }}"
+            group: clickhouse
+            mode: "{{ item.mode }}"
+          loop:
+            - { path: "{{ ch_ring_config_directory }}", owner: root, mode: "0755" }
+            - { path: "{{ ch_ring_config_directory }}/config.d", owner: root, mode: "0755" }
+            - { path: "{{ ch_ring_config_directory }}/users.d", owner: root, mode: "0755" }
+            - { path: "{{ ch_ring_log_directory }}", owner: clickhouse, mode: "0750" }
+          loop_control:
+            label: "{{ item.path }}"
+
+        - name: Copy the packaged configuration files for the second instance
+          ansible.builtin.copy:
+            src: "/etc/clickhouse-server/{{ item }}"
+            dest: "{{ ch_ring_config_directory }}/{{ item }}"
+            remote_src: true
+            # never overwrite: the copy is only the starting point
+            force: false
+            owner: root
+            group: clickhouse
+            mode: "0640"
+          loop:
+            - config.xml
+            - users.xml
+
+        - name: Install the systemd unit of the second instance
+          ansible.builtin.template:
+            src: clickhouse-server-2.service.j2
+            dest: "/etc/systemd/system/{{ ch_ring_service }}.service"
+            owner: root
+            group: root
+            mode: "0644"
+          register: _ch_unit
+
+        - name: Reload systemd  # noqa: no-handler
+          ansible.builtin.systemd:
+            daemon_reload: true
+          when: _ch_unit.changed
+
+    - name: Write the instance configuration (ports, paths)
+      ansible.builtin.template:
+        src: server-instance.xml.j2
+        dest: "{{ ch_inst.conf_dir }}/config.d/99-edb-instance.xml"
+        owner: root
+        group: clickhouse
+        mode: "0640"
+      loop: "{{ _ch_instances }}"
+      loop_control:
+        loop_var: ch_inst
+        label: "{{ ch_inst.service }}"
+      register: _ch_instance_conf
+      diff: false
+
+    - name: Write the cluster configuration (remote servers, macros, Keeper)
+      ansible.builtin.template:
+        src: server-cluster.xml.j2
+        dest: "{{ ch_inst.conf_dir }}/config.d/99-edb-cluster.xml"
+        owner: root
+        group: clickhouse
+        mode: "0640"
+      loop: "{{ _ch_instances }}"
+      loop_control:
+        loop_var: ch_inst
+        label: "{{ ch_inst.service }}"
+      register: _ch_cluster_conf
+      diff: false
+      when: ch_topology != 'single'
+
+    - name: Write the password of the default user
+      ansible.builtin.template:
+        src: users-default-password.xml.j2
+        dest: "{{ ch_inst.conf_dir }}/users.d/99-edb-default-password.xml"
+        owner: root
+        group: clickhouse
+        mode: "0640"
+      loop: "{{ _ch_instances }}"
+      loop_control:
+        loop_var: ch_inst
+        label: "{{ ch_inst.service }}"
+      register: _ch_password_conf
+      diff: false
+      when: ch_default_password | length > 0
+
+    - name: Remember which servers need a restart
+      ansible.builtin.set_fact:
+        _ch_changed_services: >-
+          {{ ((_ch_instance_conf.results | default([]))
+              + (_ch_cluster_conf.results | default([]))
+              + (_ch_password_conf.results | default([])))
+             | selectattr('changed', 'defined') | selectattr('changed')
+             | map(attribute='ch_inst.service') | unique | list
+             + ([ch_ring_service] if (_ch_unit.changed | default(false)) else []) }}

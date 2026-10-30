@@ -1,0 +1,20 @@
+# {{ ansible_managed }}
+[Unit]
+Description=ClickHouse Server, second instance (replica of the previous shard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clickhouse
+Group=clickhouse
+Restart=on-failure
+RestartSec=10
+RuntimeDirectory={{ ch_ring_service }}
+ExecStart={{ ch_server_binary }} --config-file={{ ch_ring_config_directory }}/config.xml --pid-file=/run/{{ ch_ring_service }}/clickhouse-server.pid
+LimitCORE=infinity
+LimitNOFILE=500000
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_IPC_LOCK CAP_SYS_NICE CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

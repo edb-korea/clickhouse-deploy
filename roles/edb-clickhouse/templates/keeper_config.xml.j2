@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!-- {{ ansible_managed }} -->
+{% macro addr(h) -%}
+{{ h.ch_address | default(h.ansible_host | default(h.inventory_hostname)) }}
+{%- endmacro %}
+<clickhouse>
+    <logger>
+        <level>information</level>
+        <console>1</console>
+    </logger>
+    <listen_host>{{ ch_listen_host }}</listen_host>
+    <keeper_server>
+        <tcp_port>{{ ch_keeper_port }}</tcp_port>
+        <server_id>{{ ch_keeper_id }}</server_id>
+        <log_storage_path>{{ ch_keeper_data_directory }}/log</log_storage_path>
+        <snapshot_storage_path>{{ ch_keeper_data_directory }}/snapshots</snapshot_storage_path>
+        <coordination_settings>
+            <operation_timeout_ms>{{ ch_keeper_operation_timeout_ms }}</operation_timeout_ms>
+            <session_timeout_ms>{{ ch_keeper_session_timeout_ms }}</session_timeout_ms>
+            <raft_logs_level>information</raft_logs_level>
+        </coordination_settings>
+        <raft_configuration>
+{% for h in _ch_keeper_hosts | map('extract', hostvars) | sort(attribute='ch_keeper_id') %}
+            <server>
+                <id>{{ h.ch_keeper_id }}</id>
+                <hostname>{{ addr(h) }}</hostname>
+                <port>{{ ch_keeper_raft_port }}</port>
+            </server>
+{% endfor %}
+        </raft_configuration>
+    </keeper_server>
+</clickhouse>

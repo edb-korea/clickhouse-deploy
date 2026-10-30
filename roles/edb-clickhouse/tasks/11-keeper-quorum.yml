@@ -1,0 +1,65 @@
+---
+
+# Check that this Keeper node is part of a working quorum.
+
+- name: Load the topology facts
+  ansible.builtin.include_tasks: 01-pre-flight-checks.yml
+  when: _ch_keeper_hosts is not defined
+
+- name: Check that Keeper is healthy (ruok)
+  ansible.builtin.command:
+    argv:
+      - clickhouse-keeper-client
+      - --host
+      - 127.0.0.1
+      - --port
+      - "{{ ch_keeper_port }}"
+      - --query
+      - ruok
+  become: true
+  become_user: root
+  changed_when: false
+  register: _ch_keeper_ruok
+  until: (_ch_keeper_ruok.stdout | default('') | trim) == 'imok'
+  retries: 12
+  delay: 5
+
+- name: Read the Keeper monitoring data (mntr)
+  ansible.builtin.command:
+    argv:
+      - clickhouse-keeper-client
+      - --host
+      - 127.0.0.1
+      - --port
+      - "{{ ch_keeper_port }}"
+      - --query
+      - mntr
+  become: true
+  become_user: root
+  changed_when: false
+  register: _ch_keeper_mntr
+  until: _ch_keeper_mntr.stdout is regex('zk_server_state\s+(leader|follower)')
+  retries: 12
+  delay: 5
+
+- name: Set the Keeper state
+  ansible.builtin.set_fact:
+    _ch_keeper_state: "{{ _ch_keeper_mntr.stdout | regex_search('zk_server_state\\s+(\\w+)', '\\1') | first }}"
+    _ch_keeper_synced_followers: >-
+      {{ (_ch_keeper_mntr.stdout | regex_search('zk_synced_followers\\s+(\\d+)', '\\1') | default(['0'], true) | first) | int }}
+
+# A leader that is only synced with fewer followers than a quorum needs is not usable
+- name: Assert the leader has enough synced followers for a quorum
+  ansible.builtin.assert:
+    that:
+      - (_ch_keeper_synced_followers | int) >= ((_ch_keeper_hosts | length) // 2)
+    fail_msg: >-
+      Keeper leader {{ inventory_hostname }} has {{ _ch_keeper_synced_followers }} synced
+      follower(s), but a quorum of {{ (_ch_keeper_hosts | length) // 2 + 1 }} nodes is required.
+  when: _ch_keeper_state == 'leader'
+
+- name: Show the Keeper state
+  ansible.builtin.debug:
+    msg: >-
+      Keeper {{ inventory_hostname }} (id {{ ch_keeper_id }}) is a {{ _ch_keeper_state }}{{
+      ' with ' ~ _ch_keeper_synced_followers ~ ' synced follower(s)' if _ch_keeper_state == 'leader' else '' }}.

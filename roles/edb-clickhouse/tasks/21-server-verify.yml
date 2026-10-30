@@ -1,0 +1,77 @@
+---
+
+# Check that every server instance knows the whole cluster and reaches Keeper.
+
+- name: Load the topology facts
+  ansible.builtin.include_tasks: 01-pre-flight-checks.yml
+  when: _ch_instances is not defined
+
+- name: Read the version of the server instances
+  ansible.builtin.command:
+    argv:
+      - clickhouse-client
+      - --host
+      - 127.0.0.1
+      - --port
+      - "{{ ch_inst.tcp_port }}"
+      - --query
+      - SELECT version()
+  environment:
+    CLICKHOUSE_PASSWORD: "{{ ch_default_password }}"
+  changed_when: false
+  register: _ch_version
+  loop: "{{ _ch_instances }}"
+  loop_control:
+    loop_var: ch_inst
+    label: "{{ ch_inst.service }}"
+
+- name: Show the version of the server instances
+  ansible.builtin.debug:
+    msg: "{{ item.ch_inst.service }} on {{ inventory_hostname }}: {{ item.stdout }}"
+  loop: "{{ _ch_version.results }}"
+  loop_control:
+    label: "{{ item.ch_inst.service }}"
+
+- name: Count the replicas of the cluster as seen by the server instances
+  ansible.builtin.command:
+    argv:
+      - clickhouse-client
+      - --host
+      - 127.0.0.1
+      - --port
+      - "{{ ch_inst.tcp_port }}"
+      - --query
+      - "SELECT count() FROM system.clusters WHERE cluster = '{{ ch_cluster_name }}'"
+  environment:
+    CLICKHOUSE_PASSWORD: "{{ ch_default_password }}"
+  changed_when: false
+  register: _ch_cluster_count
+  failed_when: (_ch_cluster_count.stdout | trim | int) != (_ch_expected_replicas | int)
+  loop: "{{ _ch_instances }}"
+  loop_control:
+    loop_var: ch_inst
+    label: "{{ ch_inst.service }}"
+  when: ch_topology != 'single'
+
+- name: Check that the server instances are connected to Keeper
+  ansible.builtin.command:
+    argv:
+      - clickhouse-client
+      - --host
+      - 127.0.0.1
+      - --port
+      - "{{ ch_inst.tcp_port }}"
+      - --query
+      - "SELECT count() FROM system.zookeeper WHERE path = '/'"
+  environment:
+    CLICKHOUSE_PASSWORD: "{{ ch_default_password }}"
+  changed_when: false
+  register: _ch_zk_count
+  until: _ch_zk_count.rc == 0 and (_ch_zk_count.stdout | trim | int) > 0
+  retries: 6
+  delay: 5
+  loop: "{{ _ch_instances }}"
+  loop_control:
+    loop_var: ch_inst
+    label: "{{ ch_inst.service }}"
+  when: _ch_keeper_hosts | length > 0

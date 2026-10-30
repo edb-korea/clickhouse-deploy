@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!-- {{ ansible_managed }} -->
+{% macro addr(h) -%}
+{{ h.ch_address | default(h.ansible_host | default(h.inventory_hostname)) }}
+{%- endmacro %}
+<clickhouse>
+    <listen_host>{{ ch_listen_host }}</listen_host>
+    <http_port>{{ ch_inst.http_port }}</http_port>
+    <tcp_port>{{ ch_inst.tcp_port }}</tcp_port>
+    <interserver_http_port>{{ ch_inst.interserver_port }}</interserver_http_port>
+{% if ch_topology != 'single' %}
+    <!-- address under which the other replicas fetch parts from this server -->
+    <interserver_http_host>{{ addr(hostvars[inventory_hostname]) }}</interserver_http_host>
+{% endif %}
+{% if ch_interserver_password | length > 0 %}
+    <interserver_http_credentials>
+        <user>interserver</user>
+        <password>{{ ch_interserver_password }}</password>
+    </interserver_http_credentials>
+{% endif %}
+{% if not ch_inst.primary %}
+    <logger>
+        <level>information</level>
+        <log>{{ ch_ring_log_directory }}/clickhouse-server.log</log>
+        <errorlog>{{ ch_ring_log_directory }}/clickhouse-server.err.log</errorlog>
+        <size>1000M</size>
+        <count>10</count>
+    </logger>
+{% endif %}
+{% if ch_inst.custom_paths %}
+    <path>{{ ch_inst.data_dir }}/</path>
+    <tmp_path>{{ ch_inst.data_dir }}/tmp/</tmp_path>
+    <user_files_path>{{ ch_inst.data_dir }}/user_files/</user_files_path>
+    <format_schema_path>{{ ch_inst.data_dir }}/format_schemas/</format_schema_path>
+    <user_directories>
+        <users_xml>
+            <path>users.xml</path>
+        </users_xml>
+        <local_directory>
+            <path>{{ ch_inst.data_dir }}/access/</path>
+        </local_directory>
+    </user_directories>
+{% endif %}
+</clickhouse>

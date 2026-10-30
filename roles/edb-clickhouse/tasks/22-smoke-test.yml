@@ -1,0 +1,85 @@
+---
+
+# Create a test table, insert rows through the Distributed table and check
+# that they are sharded and replicated. Runs on the first server of the cluster.
+# 'single' uses a plain MergeTree table, the multi-node topologies a
+# ReplicatedMergeTree + Distributed table created ON CLUSTER.
+
+- name: Load the topology facts
+  ansible.builtin.include_tasks: 01-pre-flight-checks.yml
+  when: _ch_instances is not defined
+
+- name: Run the smoke test on the first server of the cluster
+  when: inventory_hostname == _ch_server_hosts | first
+  environment:
+    CLICKHOUSE_PASSWORD: "{{ ch_default_password }}"
+  vars:
+    _ch_client:
+      - clickhouse-client
+      - --host
+      - 127.0.0.1
+      - --port
+      - "{{ ch_tcp_port }}"
+  block:
+    - name: Create the smoke test tables
+      ansible.builtin.command:
+        argv: "{{ _ch_client + ['--query', item] }}"
+      changed_when: true
+      loop: >-
+        {{ ["CREATE TABLE IF NOT EXISTS default.ch_smoke (id UInt64, v String) ENGINE = MergeTree ORDER BY id"]
+           if ch_topology == 'single' else [
+           "CREATE TABLE IF NOT EXISTS default.ch_smoke ON CLUSTER " ~ ch_cluster_name
+           ~ " (id UInt64, v String) ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/ch_smoke', '{replica}')"
+           ~ " ORDER BY id",
+           "CREATE TABLE IF NOT EXISTS default.ch_smoke_dist ON CLUSTER " ~ ch_cluster_name
+           ~ " AS default.ch_smoke ENGINE = Distributed(" ~ ch_cluster_name ~ ", default, ch_smoke, rand())"
+           ] }}
+
+    - name: Insert the smoke test rows
+      ansible.builtin.command:
+        argv: >-
+          {{ _ch_client + ['--query',
+             'INSERT INTO default.' ~ ('ch_smoke' if ch_topology == 'single' else 'ch_smoke_dist')
+             ~ ' SELECT number, toString(number) FROM numbers(' ~ ch_smoke_test_rows ~ ') SETTINGS insert_distributed_sync = 1'] }}
+      changed_when: true
+
+    - name: Count the rows seen through the cluster
+      ansible.builtin.command:
+        argv: >-
+          {{ _ch_client + ['--query', 'SELECT count() FROM default.' ~ ('ch_smoke' if ch_topology == 'single' else 'ch_smoke_dist')] }}
+      changed_when: false
+      register: _ch_smoke_rows
+      until: (_ch_smoke_rows.stdout | trim | int) == (ch_smoke_test_rows | int)
+      retries: 12
+      delay: 5
+
+    # every row exists on every replica of its shard: the sum of the local
+    # tables of all replicas is rows x replicas per shard (e.g. 2 x rows for
+    # the 'ring' topology and for shards with two replicas)
+    - name: Count the rows of all replicas (replication check)
+      ansible.builtin.command:
+        argv: >-
+          {{ _ch_client + ['--query', "SELECT count() FROM clusterAllReplicas('" ~ ch_cluster_name ~ "', default, ch_smoke)"] }}
+      changed_when: false
+      register: _ch_smoke_replicated
+      until: >-
+        (_ch_smoke_replicated.stdout | trim | int)
+        == ((ch_smoke_test_rows | int) * ((_ch_expected_replicas | int) // (_ch_shard_count | int)))
+      retries: 12
+      delay: 5
+      # only check shards that all have the same number of replicas
+      when:
+        - ch_topology != 'single'
+        - (_ch_expected_replicas | int) % (_ch_shard_count | int) == 0
+
+    - name: Drop the smoke test tables
+      ansible.builtin.command:
+        argv: "{{ _ch_client + ['--query', item] }}"
+      changed_when: true
+      loop: >-
+        {{ ["DROP TABLE IF EXISTS default.ch_smoke"]
+           if ch_topology == 'single' else [
+           "DROP TABLE IF EXISTS default.ch_smoke_dist ON CLUSTER " ~ ch_cluster_name ~ " SYNC",
+           "DROP TABLE IF EXISTS default.ch_smoke ON CLUSTER " ~ ch_cluster_name ~ " SYNC"
+           ] }}
+      when: ch_smoke_test_cleanup | bool

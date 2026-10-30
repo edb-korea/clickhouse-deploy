@@ -1,0 +1,44 @@
+---
+
+- name: Remember that Keeper does not need a restart on this host
+  ansible.builtin.set_fact:
+    _ch_keeper_changed: false
+
+- name: Configure Keeper
+  when: "'keeper' in ch_roles"
+  become: true
+  become_user: root
+  block:
+    - name: Create the Keeper data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: clickhouse
+        group: clickhouse
+        mode: "0750"
+      loop:
+        - "{{ ch_keeper_data_directory }}"
+        - "{{ ch_keeper_data_directory }}/log"
+        - "{{ ch_keeper_data_directory }}/snapshots"
+
+    # present with edb-clickhouse-keeper; a co-located Keeper may only have the server package
+    - name: Create the Keeper configuration directory
+      ansible.builtin.file:
+        path: /etc/clickhouse-keeper
+        state: directory
+        owner: root
+        group: clickhouse
+        mode: "0755"
+
+    - name: Write the Keeper configuration
+      ansible.builtin.template:
+        src: keeper_config.xml.j2
+        dest: /etc/clickhouse-keeper/keeper_config.xml
+        owner: root
+        group: clickhouse
+        mode: "0640"
+      register: _ch_keeper_conf
+
+    - name: Remember if Keeper needs a restart
+      ansible.builtin.set_fact:
+        _ch_keeper_changed: "{{ _ch_keeper_conf.changed }}"

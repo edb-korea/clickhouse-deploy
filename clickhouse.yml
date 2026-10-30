@@ -1,0 +1,106 @@
+---
+
+# Deploys EDB Postgres AI for ClickHouse (edb-clickhouse-* packages).
+#
+# Hosts are defined in the group `clickhouse_clusters`, with one child group
+# `cluster_<cluster_name>` per cluster. See README-clickhouse.md and the
+# example inventories in inventories/clickhouse/:
+#
+#   ansible-playbook -i inventories/clickhouse/single.yml    clickhouse.yml
+#   ansible-playbook -i inventories/clickhouse/ring3.yml     clickhouse.yml
+#   ansible-playbook -i inventories/clickhouse/dedicated-keeper.yml clickhouse.yml
+#
+# The EDB subscription token is read from ~/.edb-token (override the path
+# with -e ch_edb_token_file=/path/to/token).
+#
+# Order of the plays:
+#   1. repository, packages and configuration on all hosts (no service is touched)
+#   2. start Keeper one node at a time (never breaks the quorum)
+#   3. check the Keeper quorum
+#   4. start the servers (`ch_serial` hosts at a time, default 1)
+#   5. check the cluster, and optionally run a smoke test (`ch_run_smoke_test`)
+
+- name: Prepare ClickHouse hosts (repository, packages, configuration)
+  hosts: clickhouse_clusters
+  become: true
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Read token from local file
+      ansible.builtin.set_fact:
+        # use the token defined in the home directory
+        # change this if necessary
+        edb_token: "{{ lookup('file', ch_edb_token_file | default(lookup('env', 'HOME') ~ '/.edb-token')) | trim }}"
+        # the clickhouse plan
+        edb_repository: "{{ ch_edb_repository | default('clickhouse') }}"
+      run_once: true
+  roles:
+    - role: edb-repository
+    - role: edb-clickhouse
+
+- name: Group the ClickHouse hosts by role
+  hosts: clickhouse_clusters
+  gather_facts: false
+  tasks:
+    - name: Group the Keeper hosts
+      ansible.builtin.group_by:
+        key: ch_keeper_hosts
+      when: "'keeper' in ch_roles"
+
+    - name: Group the server hosts
+      ansible.builtin.group_by:
+        key: ch_server_hosts
+      when: "'server' in ch_roles"
+
+- name: Start Keeper
+  hosts: ch_keeper_hosts
+  # one node at a time: a restart never takes down the quorum
+  serial: 1
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Start Keeper
+      ansible.builtin.include_role:
+        name: edb-clickhouse
+        tasks_from: 10-keeper-start.yml
+
+- name: Check the Keeper quorum
+  hosts: ch_keeper_hosts
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Check the Keeper quorum
+      ansible.builtin.include_role:
+        name: edb-clickhouse
+        tasks_from: 11-keeper-quorum.yml
+
+- name: Start ClickHouse servers
+  hosts: ch_server_hosts
+  # replicas are restarted one by one by default, raise ch_serial to speed up a first deployment
+  serial: "{{ ch_serial | default(1) }}"
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Start ClickHouse servers
+      ansible.builtin.include_role:
+        name: edb-clickhouse
+        tasks_from: 20-server-start.yml
+
+- name: Verify the ClickHouse cluster
+  hosts: ch_server_hosts
+  gather_facts: false
+  become: true
+  any_errors_fatal: true
+  tasks:
+    - name: Verify the ClickHouse cluster
+      ansible.builtin.include_role:
+        name: edb-clickhouse
+        tasks_from: 21-server-verify.yml
+
+    - name: Run the smoke test
+      ansible.builtin.include_role:
+        name: edb-clickhouse
+        tasks_from: 22-smoke-test.yml
+      when: ch_run_smoke_test | default(false) | bool

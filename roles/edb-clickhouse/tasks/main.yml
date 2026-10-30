@@ -1,0 +1,17 @@
+---
+
+# Prepare phase: validate, install the packages and write the configuration.
+# No service is started or restarted here; the playbook does that in the
+# following plays, so that Keeper is up before the servers (see clickhouse.yml).
+
+- name: Run pre-flight checks
+  ansible.builtin.import_tasks: 01-pre-flight-checks.yml
+
+- name: Install ClickHouse packages
+  ansible.builtin.import_tasks: 02-install.yml
+
+- name: Configure Keeper
+  ansible.builtin.import_tasks: 03-configure-keeper.yml
+
+- name: Configure ClickHouse servers
+  ansible.builtin.import_tasks: 04-configure-server.yml
