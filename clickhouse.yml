@@ -19,6 +19,9 @@
 #   3. check the Keeper quorum
 #   4. start the servers (`ch_serial` hosts at a time, default 1)
 #   5. check the cluster, and optionally run a smoke test (`ch_run_smoke_test`)
+#
+# With --check only play 1 runs: services can not be started or queried in check mode.
+# On hosts without the packages, the configuration steps are skipped as well.
 
 - name: Prepare ClickHouse hosts (repository, packages, configuration)
   hosts: clickhouse_clusters
@@ -63,6 +66,7 @@
       ansible.builtin.include_role:
         name: edb-clickhouse
         tasks_from: 10-keeper-start.yml
+      when: not ansible_check_mode
 
 - name: Check the Keeper quorum
   hosts: ch_keeper_hosts
@@ -74,6 +78,7 @@
       ansible.builtin.include_role:
         name: edb-clickhouse
         tasks_from: 11-keeper-quorum.yml
+      when: not ansible_check_mode
 
 - name: Start ClickHouse servers
   hosts: ch_server_hosts
@@ -87,6 +92,7 @@
       ansible.builtin.include_role:
         name: edb-clickhouse
         tasks_from: 20-server-start.yml
+      when: not ansible_check_mode
 
 - name: Verify the ClickHouse cluster
   hosts: ch_server_hosts
@@ -98,9 +104,12 @@
       ansible.builtin.include_role:
         name: edb-clickhouse
         tasks_from: 21-server-verify.yml
+      when: not ansible_check_mode
 
     - name: Run the smoke test
       ansible.builtin.include_role:
         name: edb-clickhouse
         tasks_from: 22-smoke-test.yml
-      when: ch_run_smoke_test | default(false) | bool
+      when:
+        - not ansible_check_mode
+        - ch_run_smoke_test | default(false) | bool

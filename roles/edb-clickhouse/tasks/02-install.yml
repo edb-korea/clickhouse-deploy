@@ -18,11 +18,25 @@
   retries: 5
   delay: 10
 
+# In --check mode dnf does not install anything: the files that come with the
+# packages do not exist yet, so the following steps can not be checked
+- name: Remember that the packages would only be installed in check mode
+  ansible.builtin.set_fact:
+    _ch_packages_pending: "{{ ansible_check_mode and (_ch_install is changed) }}"
+
+- name: Skip the package dependent steps in check mode
+  ansible.builtin.debug:
+    msg: >-
+      Check mode: the packages ({{ _ch_packages | join(', ') }}) would be installed on
+      {{ inventory_hostname }}. The configuration steps that need them are skipped.
+  when: _ch_packages_pending
+
 - name: Check that the server binary exists
   ansible.builtin.stat:
     path: "{{ ch_server_binary }}"
   register: _ch_server_binary_stat
   when:
+    - not _ch_packages_pending
     - "'server' in ch_roles"
     - ch_topology == 'ring'
 
@@ -34,5 +48,6 @@
       {{ ch_server_binary }} does not exist on {{ inventory_hostname }}. Set
       ch_server_binary to the path of the clickhouse-server binary.
   when:
+    - not _ch_packages_pending
     - "'server' in ch_roles"
     - ch_topology == 'ring'

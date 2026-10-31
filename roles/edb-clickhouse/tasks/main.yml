@@ -12,6 +12,8 @@
 
 - name: Configure Keeper
   ansible.builtin.import_tasks: 03-configure-keeper.yml
+  when: not _ch_packages_pending
 
 - name: Configure ClickHouse servers
   ansible.builtin.import_tasks: 04-configure-server.yml
+  when: not _ch_packages_pending
