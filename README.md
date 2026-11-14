@@ -27,6 +27,12 @@ inventories/clickhouse/dedicated-keeper.yml 예제: Keeper 3대 분리 + 서버 
 ## 사용법
 
 1. EDB 구독 토큰을 `~/.edb-token`에 저장합니다. `clickhouse` 플랜 접근 권한이 필요합니다. 다른 경로의 파일을 쓰려면 `-e ch_edb_token_file=/path/to/token`을 지정하세요.
+   저장소는 다음 순서로 고릅니다(`edb_repository_source: auto`).
+   1. 호스트에서 접속되면 Altinity 저장소(`https://builds.altinity.cloud/antalya-yum-repo`, `clickhouse-*` 패키지)
+   2. 토큰이 있으면 EDB 저장소(`edb-clickhouse-*` 패키지)
+   3. 둘 다 아니면 로컬 저장소 `whpg-local`(`http://10.0.8.192:8080/whpg-repo/`)
+
+   특정 저장소를 쓰려면 `-e edb_repository_source=altinity|edb|local`을 지정하세요. 주소 등은 [roles/edb-repository/defaults/main.yml](roles/edb-repository/defaults/main.yml)의 `edb_altinity_repo_*`, `edb_local_repo_*` 변수로 바꿀 수 있습니다. Altinity와 EDB 패키지는 서로 충돌하므로, 한쪽이 이미 설치된 호스트에서 다른 쪽으로 바꾸려면 기존 패키지를 먼저 지워야 합니다.
 2. 예제 inventory를 복사해서 호스트와 IP를 바꿉니다.
 3. 실행합니다.
 
@@ -68,8 +74,11 @@ playbook은 다음 순서로 진행합니다.
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `ch_edb_repository` | `clickhouse` | EDB 저장소(플랜) 이름 |
+| `edb_repository_source` | `auto` | `auto`(Altinity → EDB → 로컬 순), `altinity`, `edb`, `local` |
+| `edb_local_repo_baseurl` | `http://10.0.8.192:8080/whpg-repo/` | 로컬 저장소 주소 |
 | `ch_upgrade` | `install-but-no-automatic-upgrades` | `always-upgrade-to-latest-minor`로 바꾸면 패키지를 최신으로 올립니다 |
 | `ch_data_directory` | `/var/lib/clickhouse` | 서버 데이터 디렉터리 |
+| `ch_vm_overcommit_memory` | `0` | `vm.overcommit_memory` 값(`/etc/sysctl.d/99-zz-clickhouse.conf`). ClickHouse는 `2`(strict, WarehousePG 권장값)에서 메모리 할당에 실패하므로 기본으로 `0`으로 바꿉니다. `''`로 두면 건드리지 않습니다 |
 | `ch_default_password` | 빈 값 | `default` 사용자 비밀번호. EDB 패키지 기본값은 비밀번호 없음입니다 |
 | `ch_cluster_secret` | 빈 값 | 멀티 노드에서 비밀번호를 쓸 때 필수. Distributed 쿼리의 노드 간 인증에 사용됩니다 |
 | `ch_interserver_password` | 빈 값 | replica 간 파트 전송 인증 |

@@ -5,12 +5,50 @@
       - ansible_facts["os_family"] == "RedHat"
     fail_msg: "This role only supports Red Hat based operating systems."
 
+- name: Check edb_repository_source
+  ansible.builtin.assert:
+    that:
+      - edb_repository_source in ['auto', 'altinity', 'edb', 'local']
+    fail_msg: "edb_repository_source must be 'auto', 'altinity', 'edb' or 'local'."
+
+- name: Check if the Altinity repository is reachable
+  ansible.builtin.uri:
+    url: "{{ edb_altinity_repo_baseurl }}/repodata/repomd.xml"
+    timeout: 10
+  # read only, so it also runs in check mode
+  check_mode: false
+  failed_when: false
+  register: _edb_altinity_probe
+  when: edb_repository_source == 'auto'
+
+- name: Select the repository source
+  ansible.builtin.set_fact:
+    edb_repository_selected: >-
+      {{ (edb_repository_source if edb_repository_source != 'auto'
+          else 'altinity' if (_edb_altinity_probe.status | default(-1)) == 200
+          else 'edb' if (edb_token | default('') | length > 0)
+          else 'local') | trim }}
+
+- name: Show the selected repository
+  ansible.builtin.debug:
+    msg: "Packages are installed from the '{{ edb_repository_selected }}' repository."
+
 - name: Assert edb_token is defined and not empty
   ansible.builtin.assert:
     that:
       - edb_token is defined
       - edb_token | length > 0
     fail_msg: "edb_token must be defined and not empty."
+  when: edb_repository_selected == 'edb'
+
+- name: Install the Altinity repository
+  ansible.builtin.import_tasks: altinity-repository.yml
+  when: edb_repository_selected == 'altinity'
 
 - name: Install EDB repository
   ansible.builtin.import_tasks: repository.yml
+  when: edb_repository_selected == 'edb'
+
+- name: Install the local repository
+  ansible.builtin.import_tasks: local-repository.yml
+  when: edb_repository_selected == 'local'

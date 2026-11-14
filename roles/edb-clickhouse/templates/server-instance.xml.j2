@@ -19,6 +19,10 @@
     </interserver_http_credentials>
 {% endif %}
 {% if not ch_inst.primary %}
+    <!-- the default config.xml also opens the MySQL / PostgreSQL protocol ports,
+         which the first instance already uses on this host -->
+    <mysql_port remove="1"/>
+    <postgresql_port remove="1"/>
     <logger>
         <level>information</level>
         <log>{{ ch_ring_log_directory }}/clickhouse-server.log</log>

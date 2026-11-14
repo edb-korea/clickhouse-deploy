@@ -7,6 +7,13 @@
   ansible.builtin.include_tasks: 01-pre-flight-checks.yml
   when: _ch_keeper_hosts is not defined
 
+- name: Check whether Keeper is already running
+  ansible.builtin.command:
+    argv: [systemctl, is-active, clickhouse-keeper]
+  register: _ch_keeper_active
+  changed_when: false
+  failed_when: false
+
 - name: Enable and start Keeper
   ansible.builtin.systemd:
     name: clickhouse-keeper
@@ -15,11 +22,24 @@
   become: true
   become_user: root
 
-# A single Keeper node can not answer client requests before the quorum
-# is formed, so only check that the port is open here.
+# Keeper opens its client port only once it is part of a quorum (or after its
+# startup_timeout, 180 s by default). On a first deployment the other Keeper
+# nodes are not started yet (serial: 1), so only wait for the Raft port, which
+# is opened as soon as the process is up.
 # The quorum is checked after all Keeper nodes are up (11-keeper-quorum.yml)
-- name: Wait until Keeper listens on its client port
+- name: Wait until Keeper listens on its Raft port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ ch_keeper_raft_port }}"
+    timeout: 120
+
+# Rolling restart of a running node: the other nodes still hold the quorum, so
+# wait until this node has rejoined it before restarting the next one.
+- name: Wait until the restarted Keeper rejoined the quorum
   ansible.builtin.wait_for:
     host: 127.0.0.1
     port: "{{ ch_keeper_port }}"
     timeout: 120
+  when:
+    - _ch_keeper_changed | default(false) | bool
+    - (_ch_keeper_active.stdout | trim) == 'active'

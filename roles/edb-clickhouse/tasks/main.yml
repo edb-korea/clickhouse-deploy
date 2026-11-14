@@ -10,6 +10,18 @@
 - name: Install ClickHouse packages
   ansible.builtin.import_tasks: 02-install.yml
 
+- name: Configure the kernel memory overcommit mode
+  ansible.posix.sysctl:
+    name: vm.overcommit_memory
+    value: "{{ ch_vm_overcommit_memory }}"
+    sysctl_file: "{{ ch_sysctl_file }}"
+    sysctl_set: true
+    state: present
+    reload: true
+  become: true
+  become_user: root
+  when: ch_vm_overcommit_memory | string | length > 0
+
 - name: Configure Keeper
   ansible.builtin.import_tasks: 03-configure-keeper.yml
   when: not _ch_packages_pending
