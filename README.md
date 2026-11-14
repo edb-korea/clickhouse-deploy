@@ -78,6 +78,7 @@ playbook은 다음 순서로 진행합니다.
 | `edb_local_repo_baseurl` | `http://10.0.8.192:8080/whpg-repo/` | 로컬 저장소 주소 |
 | `ch_upgrade` | `install-but-no-automatic-upgrades` | `always-upgrade-to-latest-minor`로 바꾸면 패키지를 최신으로 올립니다 |
 | `ch_data_directory` | `/var/lib/clickhouse` | 서버 데이터 디렉터리 |
+| `ch_vm_overcommit_memory` | `0` | `vm.overcommit_memory` 값(`/etc/sysctl.d/99-zz-clickhouse.conf`). ClickHouse는 `2`(strict, WarehousePG 권장값)에서 메모리 할당에 실패하므로 기본으로 `0`으로 바꿉니다. `''`로 두면 건드리지 않습니다 |
 | `ch_default_password` | 빈 값 | `default` 사용자 비밀번호. EDB 패키지 기본값은 비밀번호 없음입니다 |
 | `ch_cluster_secret` | 빈 값 | 멀티 노드에서 비밀번호를 쓸 때 필수. Distributed 쿼리의 노드 간 인증에 사용됩니다 |
 | `ch_interserver_password` | 빈 값 | replica 간 파트 전송 인증 |

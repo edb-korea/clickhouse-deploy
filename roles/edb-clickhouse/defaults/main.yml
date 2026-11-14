@@ -50,6 +50,14 @@ ch_interserver_http_port: 9009
 # It is created if it does not exist
 ch_data_directory: "/var/lib/clickhouse"
 
+# Kernel memory overcommit mode for the ClickHouse hosts.
+# ClickHouse reserves a lot of virtual memory (thread stacks, allocator arenas) and
+# crashes with strict accounting (vm.overcommit_memory = 2, e.g. set by WarehousePG
+# in /etc/sysctl.d/*whpg*.conf). The value is written to ch_sysctl_file, which
+# sorts after the other files so it wins at boot. Set to '' to leave it untouched.
+ch_vm_overcommit_memory: 0
+ch_sysctl_file: /etc/sysctl.d/99-zz-clickhouse.conf
+
 # Keeper
 ch_keeper_port: 9181
 ch_keeper_raft_port: 9234

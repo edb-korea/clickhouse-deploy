@@ -43,10 +43,12 @@
   delay: 5
 
 - name: Set the Keeper state
+  # regex_findall, not regex_search: on ansible-core 2.14 regex_search with a group
+  # fails when nothing matches (followers have no zk_synced_followers line)
   ansible.builtin.set_fact:
-    _ch_keeper_state: "{{ _ch_keeper_mntr.stdout | regex_search('zk_server_state\\s+(\\w+)', '\\1') | first }}"
+    _ch_keeper_state: "{{ _ch_keeper_mntr.stdout | regex_findall('zk_server_state\\s+(\\w+)') | first }}"
     _ch_keeper_synced_followers: >-
-      {{ (_ch_keeper_mntr.stdout | regex_search('zk_synced_followers\\s+(\\d+)', '\\1') | default(['0'], true) | first) | int }}
+      {{ (_ch_keeper_mntr.stdout | regex_findall('zk_synced_followers\s+(\d+)') | default(['0'], true) | first) | int }}
 
 # A leader that is only synced with fewer followers than a quorum needs is not usable
 - name: Assert the leader has enough synced followers for a quorum
