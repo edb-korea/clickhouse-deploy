@@ -12,6 +12,10 @@
 #
 # The EDB subscription token is read from ~/.edb-token (override the path
 # with -e ch_edb_token_file=/path/to/token).
+# Repository: the Altinity repository (clickhouse-* packages) is used first if the
+# hosts can reach it, then the EDB repository if there is a token, otherwise the
+# local repository (whpg-local). See edb_repository_source in
+# roles/edb-repository/defaults/main.yml, e.g. -e edb_repository_source=edb
 #
 # Order of the plays:
 #   1. repository, packages and configuration on all hosts (no service is touched)
@@ -32,7 +36,8 @@
       ansible.builtin.set_fact:
         # use the token defined in the home directory
         # change this if necessary
-        edb_token: "{{ lookup('file', ch_edb_token_file | default(lookup('env', 'HOME') ~ '/.edb-token')) | trim }}"
+        # empty if the file does not exist: the local repository is used instead
+        edb_token: "{{ (lookup('file', ch_edb_token_file | default(lookup('env', 'HOME') ~ '/.edb-token'), errors='ignore') or '') | trim }}"
         # the clickhouse plan
         edb_repository: "{{ ch_edb_repository | default('clickhouse') }}"
       run_once: true

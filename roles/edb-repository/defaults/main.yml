@@ -5,3 +5,23 @@ edb_repository: "dev"
 # the EDB repository will deny too many parallel requests
 # serialize the operation (only run n operations at a time)
 serial_operations: 1
+
+# Where the packages come from:
+#   auto      the Altinity repository if the host can reach it, otherwise the EDB
+#             repository when edb_token is set, otherwise the local repository
+#   altinity  always the Altinity repository (clickhouse-* packages)
+#   edb       always the EDB repository (edb_token is required)
+#   local     always the local repository (no token needed)
+# The selected source is stored in the fact edb_repository_selected
+edb_repository_source: "auto"
+# Altinity (Antalya) repository, preferred in 'auto' mode
+edb_altinity_repo_name: "altinity"
+edb_altinity_repo_description: "Altinity Stable"
+edb_altinity_repo_baseurl: "https://builds.altinity.cloud/antalya-yum-repo"
+edb_altinity_repo_gpgkey: "https://builds.altinity.cloud/antalya-yum-repo/RPM-GPG-KEY-altinity"
+# Local repository used when the EDB repository is not available
+edb_local_repo_name: "whpg-local"
+edb_local_repo_description: "WarehousePG Local Repository"
+edb_local_repo_baseurl: "http://10.0.8.192:8080/whpg-repo/"
+edb_local_repo_gpgcheck: false
+edb_local_repo_priority: 1

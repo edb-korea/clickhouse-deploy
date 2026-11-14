@@ -1,0 +1,34 @@
+---
+
+- name: Configure the Altinity repository
+  ansible.builtin.yum_repository:
+    name: "{{ edb_altinity_repo_name }}"
+    description: "{{ edb_altinity_repo_description }}"
+    baseurl: "{{ edb_altinity_repo_baseurl }}"
+    gpgcheck: true
+    repo_gpgcheck: true
+    gpgkey: "{{ edb_altinity_repo_gpgkey }}"
+    enabled: true
+  become: true
+  become_user: root
+  register: _edb_altinity_repo
+
+- name: Import the Altinity GPG key
+  ansible.builtin.rpm_key:
+    key: "{{ edb_altinity_repo_gpgkey }}"
+    state: present
+  become: true
+  become_user: root
+
+# -y accepts the repository key (repo_gpgcheck)
+- name: Refresh repository
+  ansible.builtin.command: dnf makecache -y --repo {{ edb_altinity_repo_name }}
+  become: true
+  become_user: root
+  changed_when: true
+  timeout: 300
+  when: _edb_altinity_repo is changed
+  register: _edb_altinity_refresh
+  until: _edb_altinity_refresh is succeeded
+  retries: 10
+  delay: 5

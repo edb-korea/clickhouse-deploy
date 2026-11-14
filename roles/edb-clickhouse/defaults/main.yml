@@ -26,15 +26,18 @@ ch_edb_repository: "clickhouse"
 # "always-upgrade-to-latest-minor" -> RPM "latest"
 ch_upgrade: "install-but-no-automatic-upgrades"
 
-# Packages: edb-clickhouse-common-static is pulled in as a dependency.
-# edb-clickhouse-server also ships clickhouse-keeper.service, so a co-located
+# Packages: <prefix>clickhouse-common-static is pulled in as a dependency.
+# <prefix>clickhouse-server also ships clickhouse-keeper.service, so a co-located
 # Keeper needs no extra package; the keeper package is only installed on nodes
-# that are Keeper only
+# that are Keeper only.
+# The Altinity packages are named clickhouse-*, the EDB ones edb-clickhouse-*
+# (same files and services). edb_repository_selected is set by the edb-repository role
+ch_package_prefix: "{{ '' if (edb_repository_selected | default('edb')) == 'altinity' else 'edb-' }}"
 ch_server_packages:
-  - edb-clickhouse-server
-  - edb-clickhouse-client
+  - "{{ ch_package_prefix }}clickhouse-server"
+  - "{{ ch_package_prefix }}clickhouse-client"
 ch_keeper_packages:
-  - edb-clickhouse-keeper
+  - "{{ ch_package_prefix }}clickhouse-keeper"
 ch_dnf_timeout: 300
 
 ch_listen_host: "0.0.0.0"
